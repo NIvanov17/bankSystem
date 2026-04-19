@@ -9,14 +9,16 @@ import java.time.LocalDate;
 @Getter
 public class CheckingAccount extends BankAccount {
     private final BigDecimal overdraftLimit;
+    private final BigDecimal overdraftFee;
     private LocalDate lastOverdraftFeeDate;
 
     public CheckingAccount(String accountNumber,
                            Customer owner,
                            BigDecimal dailyWithdrawalLimit,
-                           BigDecimal overdraftLimit) {
+                           BigDecimal overdraftLimit, BigDecimal overdraftFee) {
         super(accountNumber, owner, dailyWithdrawalLimit);
         this.overdraftLimit = overdraftLimit;
+        this.overdraftFee = overdraftFee;
     }
 
     @Override
@@ -27,16 +29,16 @@ public class CheckingAccount extends BankAccount {
         }
     }
 
-    public synchronized boolean chargeOverdraftFee(){
-        LocalDate now = LocalDate.now();
+    @Override
+    protected void afterDebit(BigDecimal amount) {
+        if (getBalanceSafely().compareTo(BigDecimal.ZERO) < 0) {
+            LocalDate now = LocalDate.now();
+            boolean chargedToday = now.equals(lastOverdraftFeeDate);
 
-        boolean accountNegative = getBalanceSafely().compareTo(BigDecimal.ZERO) < 0;
-        boolean chargedToday = now.equals(lastOverdraftFeeDate);
-
-        if(accountNegative && !chargedToday){
-            lastOverdraftFeeDate = now;
-            return true;
+            if (!chargedToday) {
+                chargeFee(overdraftFee);
+                lastOverdraftFeeDate = now;
+            }
         }
-        return false;
     }
 }

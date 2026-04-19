@@ -4,6 +4,7 @@ import bankSystem.enums.TransactionType;
 import bankSystem.exceptions.ExceededLimitException;
 import bankSystem.exceptions.InsufficientFundsException;
 import bankSystem.transaction.Transaction;
+import bankSystem.util.BalanceUtils;
 import lombok.Getter;
 
 import java.math.BigDecimal;
@@ -18,60 +19,46 @@ public class BankAccount {
     private final Customer owner;
     private BigDecimal balance;
     private final BigDecimal dailyWithdrawalLimit;
-    private BigDecimal withdrawnToday;
-    private LocalDate withdrawTrackingDate;
     private final List<Transaction> transactionHistory = new ArrayList<>();
 
     public BankAccount(String accountNumber, Customer owner, BigDecimal dailyWithdrawalLimit) {
         this.accountNumber = accountNumber;
         this.owner = owner;
         this.dailyWithdrawalLimit = dailyWithdrawalLimit;
-        this.withdrawnToday = BigDecimal.ZERO;
         this.balance = BigDecimal.ZERO;
-        this.withdrawTrackingDate = LocalDate.now();
     }
 
 
     public synchronized void deposit(BigDecimal amount) {
-        validateAmount(amount);
-        balance = balance.add(amount);
+        beforeCredit(amount);
+        balance = BalanceUtils.add(balance, amount);
         addTransaction(TransactionType.DEPOSIT, amount, null, accountNumber);
     }
 
     public synchronized void withdraw(BigDecimal amount) {
-        validateAmount(amount);
-        refreshDailyTrackingIfNeeded();
-        enforceDailyLimit(amount);
-        enforceWithdrawalAllowed(amount);
-        balance = balance.subtract(amount);
-        withdrawnToday = withdrawnToday.add(amount);
+        beforeDebit(amount);
+        applyDebit(amount);
         addTransaction(TransactionType.WITHDRAW, amount, accountNumber, null);
+        afterDebit(amount);
     }
 
     public void transferTo(BankAccount recipient, BigDecimal amount) {
-        if (recipient == null) {
-            throw new IllegalArgumentException("Target account cannot be null");
-        }
-
-        if (this == recipient) {
-            throw new IllegalArgumentException("Cannot transfer to the same account");
-        }
         validateAmount(amount);
-        if (amount.compareTo(balance) > 0) {
-            throw new IllegalArgumentException("Insufficient funds");
-        }
+
         BankAccount first = this.accountNumber.compareTo(recipient.getAccountNumber()) < 0 ? this : recipient;
         BankAccount second = this.accountNumber.compareTo(recipient.getAccountNumber()) < 0 ? recipient : this;
         synchronized (first) {
             synchronized (second) {
-                refreshDailyTrackingIfNeeded();
-                enforceDailyLimit(amount);
-                enforceWithdrawalAllowed(amount);
-                this.balance = this.balance.subtract(amount);
-                this.withdrawnToday = this.withdrawnToday.add(amount);
-                recipient.balance = recipient.balance.add(amount);
-                this.addTransaction(TransactionType.TRANSFER_SENT,amount, this.accountNumber, recipient.getAccountNumber());
-                recipient.addTransaction(TransactionType.TRANSFER_RECEIVED, amount, recipient.getAccountNumber(), this.accountNumber);
+                this.beforeDebit(amount);
+                recipient.beforeCredit(amount);
+
+                this.applyDebit(amount);
+                recipient.applyCredit(amount);
+
+                this.addTransaction(TransactionType.TRANSFER_SENT, amount, this.accountNumber, recipient.getAccountNumber());
+                recipient.addTransaction(TransactionType.TRANSFER_RECEIVED, amount, this.accountNumber, recipient.getAccountNumber());
+
+                this.afterDebit(amount);
             }
         }
     }
@@ -81,13 +68,14 @@ public class BankAccount {
     }
 
     public synchronized void applyInterestInternal(BigDecimal interestRate) {
+        enforceDepositAllowed(interestRate);
         balance = balance.add(interestRate);
         addTransaction(TransactionType.INTEREST, interestRate, null, accountNumber);
     }
 
     public synchronized void chargeFee(BigDecimal fee) {
         enforceWithdrawalAllowed(fee);
-        balance = balance.subtract(fee);
+        balance = BalanceUtils.subtract(balance, fee);
         addTransaction(TransactionType.FEE, fee, null, accountNumber);
     }
 
@@ -107,15 +95,8 @@ public class BankAccount {
                 balance));
     }
 
-    private void refreshDailyTrackingIfNeeded() {
-        LocalDate currentDate = LocalDate.now();
-        if (!currentDate.equals(withdrawTrackingDate)) {
-            withdrawnToday = BigDecimal.ZERO;
-            withdrawTrackingDate = currentDate;
-        }
-    }
-
     private void enforceDailyLimit(BigDecimal amount) {
+        BigDecimal withdrawnToday = getWithdrawnAmountForDate(LocalDate.now());
         if (withdrawnToday.add(amount).compareTo(dailyWithdrawalLimit) > 0) {
             throw new ExceededLimitException("Daily withdrawal limit exceeded");
         }
@@ -131,4 +112,41 @@ public class BankAccount {
         }
     }
 
+    private BigDecimal getWithdrawnAmountForDate(LocalDate date) {
+        return transactionHistory.stream()
+                .filter(transaction -> transaction.getTimestamp().toLocalDate().equals(date))
+                .filter(transaction ->
+                        transaction.getType() == TransactionType.WITHDRAW ||
+                                transaction.getType() == TransactionType.TRANSFER_SENT)
+                .map(Transaction::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    protected void enforceDepositAllowed(BigDecimal amount){
+
+    }
+
+    protected final void beforeCredit(BigDecimal amount) {
+        validateAmount(amount);
+        enforceDepositAllowed(amount);
+    }
+
+    protected final void beforeDebit(BigDecimal amount) {
+        validateAmount(amount);
+        enforceDailyLimit(amount);
+        enforceWithdrawalAllowed(amount);
+    }
+
+    protected final void applyCredit(BigDecimal amount) {
+        balance = BalanceUtils.add(balance, amount);
+    }
+
+    protected final void applyDebit(BigDecimal amount) {
+        balance = BalanceUtils.subtract(balance, amount);
+    }
+
+    protected void afterDebit(BigDecimal amount) {
+    }
+
 }
+

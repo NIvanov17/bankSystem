@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class Bank {
     private final Map<String, BankAccount> accounts = new ConcurrentHashMap<>();
     private final Map<String, Customer> customers = new ConcurrentHashMap<>();
-    private final AtomicLong nextAccountNumber  = new AtomicLong(100000);
+    private final AtomicLong nextAccountNumber = new AtomicLong(100000);
     private final AtomicLong nextCustomerId = new AtomicLong(1);
 
     private final String bankName;
@@ -49,9 +49,12 @@ public class Bank {
         return savingsAccount;
     }
 
-    public CheckingAccount openCheckingAccount(Customer owner, BigDecimal dailyWithdrawLimit, BigDecimal overdraftLimit) {
+    public CheckingAccount openCheckingAccount(Customer owner,
+                                               BigDecimal dailyWithdrawLimit,
+                                               BigDecimal overdraftLimit) {
         String accountNumber = String.valueOf(nextAccountNumber.getAndIncrement());
-        CheckingAccount checkingAccount = new CheckingAccount(accountNumber, owner, dailyWithdrawLimit, overdraftLimit);
+        CheckingAccount checkingAccount =
+                new CheckingAccount(accountNumber, owner, dailyWithdrawLimit, overdraftLimit, overdraftFee);
         accounts.put(accountNumber, checkingAccount);
         owner.addAccount(accountNumber);
         return checkingAccount;
@@ -66,7 +69,7 @@ public class Bank {
         account.getOwner().removeAccount(accountNumber);
     }
 
-    public BankAccount getAccount(String accountNumber){
+    public BankAccount getAccount(String accountNumber) {
         BankAccount account = accounts.get(accountNumber);
         if (account == null) {
             throw new UnknownAccountException("Account not found: " + accountNumber);
@@ -74,44 +77,33 @@ public class Bank {
         return account;
     }
 
-    public List<BankAccount> getAllAccounts(){
+    public List<BankAccount> getAllAccounts() {
         return List.copyOf(accounts.values());
     }
 
-    public void deposit(String accountNumber, BigDecimal amount){
+    public void deposit(String accountNumber, BigDecimal amount) {
         getAccount(accountNumber).deposit(amount);
     }
 
-    public void withdraw(String accountNumber, BigDecimal amount){
+    public void withdraw(String accountNumber, BigDecimal amount) {
         BankAccount account = getAccount(accountNumber);
         account.withdraw(amount);
 
-        if(withdrawalFee.compareTo(BigDecimal.ZERO) > 0){
+        if (withdrawalFee.compareTo(BigDecimal.ZERO) > 0) {
             account.chargeFee(withdrawalFee);
-        }
-
-        if (account instanceof CheckingAccount checkingAccount
-                && overdraftFee.compareTo(BigDecimal.ZERO) > 0
-                && checkingAccount.chargeOverdraftFee()) {
-            checkingAccount.chargeFee(overdraftFee);
         }
     }
 
-    public void transfer(String fromAccountNumber, String toAccountNumber, BigDecimal amount){
+    public void transfer(String fromAccountNumber, String toAccountNumber, BigDecimal amount) {
         BankAccount sender = getAccount(fromAccountNumber);
         sender.transferTo(getAccount(toAccountNumber), amount);
-        if (sender instanceof CheckingAccount checkingAccount
-                && overdraftFee.compareTo(BigDecimal.ZERO) > 0
-                && checkingAccount.chargeOverdraftFee()) {
-            checkingAccount.chargeFee(overdraftFee);
-        }
     }
 
     public int getAccountCount() {
         return accounts.size();
     }
 
-    public Statement generateStatement(String accountNumber, LocalDate from, LocalDate to){
+    public Statement generateStatement(String accountNumber, LocalDate from, LocalDate to) {
         BankAccount account = getAccount(accountNumber);
         List<Transaction> transactionHistory = account.getTransactionHistory();
 
